@@ -1,0 +1,37 @@
+<RelativeLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/main"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="20dp"
+    tools:context=".logica.CamaraActivity">
+
+    <!-- Ajustamos el tamaño de la ImageView para que ocupe la mayor parte de la pantalla -->
+    <ImageView
+        android:id="@+id/selected_image"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_above="@id/btn_camera"
+        android:layout_alignParentTop="true"
+        android:layout_marginBottom="10dp"
+        android:scaleType="centerCrop"
+        android:contentDescription="Selected image"/>
+
+    <Button
+        android:id="@+id/btn_camera"
+        android:layout_width="150dp"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:text="Cámara"/>
+
+    <Button
+        android:id="@+id/btn_gallery"
+        android:layout_width="150dp"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:layout_alignParentEnd="true"
+        android:layout_marginStart="10dp"
+        android:text="Galería"/>
+</RelativeLayout>

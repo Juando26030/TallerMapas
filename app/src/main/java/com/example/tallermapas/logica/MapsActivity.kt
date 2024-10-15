@@ -1,5 +1,6 @@
 package com.example.tallermapas.logica
 
+import com.android.volley.Request
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -7,23 +8,19 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.location.Geocoder
 import android.location.Location
+import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Log
-import android.widget.AutoCompleteTextView
-import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
-import com.example.tallermapas.R
-import com.example.tallermapas.adaptadores.AutoCompleteAdapter
+import androidx.core.app.ActivityCompat
+import com.android.volley.toolbox.StringRequest
+import com.android.volley.toolbox.Volley
 import com.example.tallermapas.databinding.ActivityMapsBinding
+import com.example.tallermapas.R
 import com.example.tallermapas.funciones.FuncionesPermisos
 import com.example.tallermapas.funciones.FuncionesUbicacion
-import com.google.android.gms.location.LocationCallback
-import com.google.android.gms.location.LocationRequest
-import com.google.android.gms.location.LocationResult
-import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
@@ -31,180 +28,137 @@ import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.MapStyleOptions
-import com.google.android.gms.maps.model.Marker
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import com.google.android.gms.maps.model.Polyline
 import com.google.android.gms.maps.model.PolylineOptions
-import com.google.android.libraries.places.api.Places
-import com.google.android.libraries.places.api.net.PlacesClient
-import com.google.firebase.firestore.GeoPoint
-
+import org.json.JSONObject
+import java.io.IOException
 
 class MapsActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListener {
 
     private lateinit var mMap: GoogleMap
     private lateinit var binding: ActivityMapsBinding
     private var lastLocation: Location? = null
-    private var ubicacionActual: LatLng? = null
-    private val locationFileName = "ubicaciones.json"
-
-    // Variables para Places API
-    private lateinit var placesClient: PlacesClient
-    private lateinit var autoCompleteAdapter: AutoCompleteAdapter
-    private var currentMarker: Marker? = null // Variable para almacenar el marcador actual
-    private var polyline: Polyline? = null // Variable para la polilínea (ruta)
+    private val LOCATION_PERMISSION_CODE = 100
 
     // SensorManager para detectar el sensor de luz
     private lateinit var sensorManager: SensorManager
     private var lightSensor: Sensor? = null
     private var isNightMode: Boolean = false // Bandera para controlar el modo nocturno
 
-    // Código de solicitud de permisos para la ubicación
-    private val LOCATION_PERMISSION_REQUEST_CODE = 1001
+    // Variables para la ruta
+    private var polyline: Polyline? = null
+    private val routePoints = mutableListOf<LatLng>() // Lista que almacenará los puntos de la ruta
+
+    //Inicializar Geocoder
+    private lateinit var geocoder: Geocoder
+    private var currentLocationMarker: MarkerOptions? = null // Marcador de mi ubicación
+    private var destinationMarker: MarkerOptions? = null // Marcador del destino
+
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        try {
-            // Inicializar ViewBinding
-            binding = ActivityMapsBinding.inflate(layoutInflater)
-            setContentView(binding.root)
+        binding = ActivityMapsBinding.inflate(layoutInflater)
+        setContentView(binding.root)
 
-            // Verificar permisos de ubicación utilizando FuncionesPermisos
-            FuncionesPermisos.checkAndRequestPermission(
-                this,
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                LOCATION_PERMISSION_REQUEST_CODE
-            ) {
-                // Si el permiso es otorgado, proceder a obtener la ubicación y cargar el mapa
-                obtenerUbicacionYActualizar()
+        // Inicializar SensorManager y el sensor de luz
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT)
+
+        // Obtener el fragmento del mapa y configurar el callback
+        val mapFragment = supportFragmentManager
+            .findFragmentById(R.id.map) as SupportMapFragment
+        mapFragment.getMapAsync(this)
+
+        geocoder = Geocoder(this)  // Inicializar el Geocoder
+
+        // Evento para buscar la dirección cuando el usuario termina de editar el EditText
+        binding.etDireccion.setOnEditorActionListener { v, actionId, event ->
+            val direccion = binding.etDireccion.text.toString()
+            if (direccion.isNotEmpty()) {
+                buscarDireccion(direccion)
             }
-
-            // Inicializar el SDK de Places utilizando la clave desde el AndroidManifest.xml
-            val apiKey = getApiKeyFromManifest()
-            if (!Places.isInitialized()) {
-                Places.initialize(applicationContext, apiKey)
-            }
-            placesClient = Places.createClient(this)
-
-            // Inicializar SensorManager y el sensor de luz
-            sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-            lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT)
-
-            // Obtener el fragmento del mapa y configurar el callback
-            val mapFragment = supportFragmentManager.findFragmentById(R.id.mapa) as SupportMapFragment
-            mapFragment.getMapAsync(this)
-
-            // Configurar AutoCompleteTextView para autocompletar direcciones
-            val destinoAutoCompleteTextView: AutoCompleteTextView = findViewById(R.id.destino)
-
-            // Inicializar el adaptador de autocompletado personalizado
-            autoCompleteAdapter = AutoCompleteAdapter(this, placesClient, destinoAutoCompleteTextView)
-
-
-
-        } catch (e: Exception) {
-            Log.e("MapsActivity", "Error en onCreate: ${e.message}")
-            Toast.makeText(this, "Error al iniciar la actividad: ${e.message}", Toast.LENGTH_LONG).show()
+            false
         }
     }
 
     override fun onMapReady(googleMap: GoogleMap) {
-        try {
-            mMap = googleMap
+        mMap = googleMap
 
+        // Verificar y solicitar permisos de ubicación antes de obtener la ubicación actual
+        FuncionesPermisos.checkAndRequestPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            LOCATION_PERMISSION_CODE
+        ) {
             // Obtener la ubicación actual y agregar el marcador inicial
             FuncionesUbicacion.obtenerUbicacionActual(this) { ubicacion ->
                 if (ubicacion != null) {
-                    ubicacionActual = LatLng(ubicacion.first, ubicacion.second)
+                    val latLng = LatLng(ubicacion.first, ubicacion.second)
 
-                    // Actualiza la ubicación en el AutoCompleteAdapter
-                    autoCompleteAdapter.setUbicacionActual(ubicacionActual!!)
+                    // Hacer zoom a nivel 15
+                    mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
 
-                    // Hacer zoom a nivel 15 primero
-                    mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(ubicacionActual!!, 15f))
+                    // Guardar el marcador de la ubicación actual en la variable para no perderlo
+                    if (currentLocationMarker == null) {
+                        // Si es la primera vez, creamos el marcador de la ubicación actual
+                        currentLocationMarker = MarkerOptions().position(latLng).title("Ubicación actual")
+                        mMap.addMarker(currentLocationMarker!!)
+                    } else {
+                        // Si ya existe, solo actualizamos su posición
+                        currentLocationMarker?.position(latLng)
+                    }
 
-                    // Luego agregar el marcador
-                    mMap.addMarker(MarkerOptions().position(ubicacionActual!!).title("Ubicación Actual"))
-
-                    // Mostrar mensaje de confirmación
-                    Toast.makeText(this, "Marcador de ubicación inicial agregado.", Toast.LENGTH_LONG).show()
+                    // Iniciar Polyline con la ubicación inicial
+                    polyline = mMap.addPolyline(PolylineOptions().add(latLng))
+                    routePoints.add(latLng)
                 } else {
                     Toast.makeText(this, "No se pudo obtener la ubicación inicial.", Toast.LENGTH_LONG).show()
                 }
             }
 
-            // Evento de LongClick en el mapa para crear un marcador con la dirección
-            mMap.setOnMapLongClickListener { latLng ->
-                FuncionesUbicacion.obtenerDireccionDesdeLatLng(this, latLng) { direccion ->
-                    if (direccion != null) {
-                        // Agregar el marcador con la dirección obtenida
-                        mMap.addMarker(MarkerOptions().position(latLng).title(direccion))
+            // Empezar a recibir actualizaciones de la ubicación para actualizar la ruta
+            obtenerUbicacionYActualizar()
+        }
 
-                        // Mostrar la distancia al nuevo marcador si se tiene la ubicación actual
-                        if (ubicacionActual != null) {
-                            val distancia = FuncionesUbicacion.calcularDistanciaEntrePuntos(ubicacionActual!!, latLng)
-                            Toast.makeText(this, "Distancia al marcador: $distancia metros", Toast.LENGTH_LONG).show()
-                        }
-                    }
-                }
+        // Listener para LongClick en el mapa
+        mMap.setOnMapLongClickListener { latLng ->
+            buscarDireccionDeCoordenadas(latLng)
+
+            // Calcular la ruta si hay una ubicación actual
+            if (lastLocation != null) {
+                val origen = LatLng(lastLocation!!.latitude, lastLocation!!.longitude)
+                calcularYMostrarRuta(origen, latLng)  // Aquí se calcula la ruta desde mi ubicación hasta el punto tocado
             }
-
-
-            autoCompleteAdapter.setOnItemClickListener { prediction ->
-                FuncionesUbicacion.obtenerLatLngDesdeDireccion(this, prediction) { latLng ->
-                    if (latLng != null) {
-                        // Eliminar el marcador anterior si existe
-                        currentMarker?.remove()
-
-                        // Agregar el nuevo marcador
-                        currentMarker = mMap.addMarker(MarkerOptions().position(latLng).title(prediction))
-                        mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
-
-                        // Dibujar la ruta entre la ubicación actual y el destino
-                        if (ubicacionActual != null) {
-                            dibujarRuta(ubicacionActual!!, latLng)
-                            val distancia = FuncionesUbicacion.calcularDistanciaEntrePuntos(ubicacionActual!!, latLng)
-                            actualizarDistancia(distancia)
-                        }
-                    }
-                }
-            }
-
-        } catch (e: Exception) {
-            Log.e("MapsActivity", "Error en onMapReady: ${e.message}")
-            Toast.makeText(this, "Error al preparar el mapa: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
-    private fun dibujarRuta(origen: LatLng, destino: LatLng) {
-        // Eliminar la polilínea anterior si existe
-        polyline?.remove()
 
-        // Crear una nueva polilínea (ruta)
-        polyline = mMap.addPolyline(
-            PolylineOptions()
-                .add(origen, destino)
-                .width(10f)
-                .color(ContextCompat.getColor(this, R.color.purple)) // Color de la ruta
-        )
-    }
 
-    private fun actualizarDistancia(distancia: Float) {
-        val textViewDistancia: TextView = findViewById(R.id.distancia)
-        // Redondeamos la distancia a un solo decimal
-        val distanciaFormateada = String.format("%.1f", distancia)
-        textViewDistancia.text = "Distancia al destino: ${distanciaFormateada} km"
-    }
-    // Método para obtener la API key del manifiesto
-    private fun getApiKeyFromManifest(): String {
+    // Función para obtener la dirección a partir de las coordenadas con LongClick
+    private fun buscarDireccionDeCoordenadas(latLng: LatLng) {
         try {
-            val ai = packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
-            val bundle = ai.metaData
-            return bundle.getString("com.google.android.geo.API_KEY") ?: ""
-        } catch (e: PackageManager.NameNotFoundException) {
-            Log.e("MapsActivity", "Error al obtener la API Key: ${e.message}")
+            // Usamos el Geocoder para obtener la dirección de las coordenadas
+            val direcciones = geocoder.getFromLocation(latLng.latitude, latLng.longitude, 1)
+            if (direcciones != null && direcciones.isNotEmpty()) {
+                val direccion = direcciones[0].getAddressLine(0)
+
+                // Agregar un marcador con la dirección y mover la cámara
+                mMap.addMarker(MarkerOptions().position(latLng).title(direccion))
+                mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
+                Toast.makeText(this, "Marcador agregado en: $direccion", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "No se encontró dirección para esta ubicación", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: IOException) {
+            Toast.makeText(this, "Error al obtener la dirección", Toast.LENGTH_SHORT).show()
         }
-        return ""
     }
 
     // Registrar el listener del sensor de luz cuando la actividad se reanuda
@@ -253,32 +207,218 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         }
     }
 
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-        // No se necesita implementar nada aquí en este caso
+
+    override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {
+        // No es necesario implementar esta función para el sensor de luz
     }
 
-    // Método para solicitar la ubicación actual y actualizar en el mapa
+    // Método que maneja la solicitud de permisos y actualiza la ubicación
+    // Método que maneja la solicitud de permisos y actualiza la ubicación
     private fun obtenerUbicacionYActualizar() {
-        val fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this)
+        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
-        val locationRequest = LocationRequest.Builder(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY, 10000).build()
+        // Configuración para detectar cambios de más de 30 metros usando el Builder moderno
+        val locationRequest = LocationRequest.Builder(
+            Priority.PRIORITY_HIGH_ACCURACY,
+            5000L
+        ) // Intervalo de 5 segundos
+            .setMinUpdateIntervalMillis(3000L) // El intervalo más rápido, 3 segundos
+            .setMinUpdateDistanceMeters(30f) // Desplazamiento mínimo de 30 metros
+            .build()
 
-        // Verificar permisos utilizando FuncionesPermisos
-        FuncionesPermisos.checkAndRequestPermission(
-            this,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            LOCATION_PERMISSION_REQUEST_CODE
-        ) {
-            fusedLocationProviderClient.requestLocationUpdates(locationRequest, object : LocationCallback() {
-                override fun onLocationResult(locationResult: LocationResult) {
-                    lastLocation = locationResult.lastLocation
-                    if (lastLocation != null) {
-                        ubicacionActual = LatLng(lastLocation!!.latitude, lastLocation!!.longitude)
-                        mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(ubicacionActual!!, 15f))
-                        mMap.addMarker(MarkerOptions().position(ubicacionActual!!).title("Ubicación Actual"))
-                    }
+        val locationCallback = object : LocationCallback() {
+            override fun onLocationResult(locationResult: LocationResult) {
+                val location = locationResult.lastLocation ?: return
+
+                val latitud = location.latitude
+                val longitud = location.longitude
+                val ubicacionActual = LatLng(latitud, longitud)
+
+                // Si es la primera vez o si el desplazamiento es significativo (> 30 metros)
+                if (lastLocation == null || lastLocation!!.distanceTo(location) > 30) {
+                    lastLocation = location
+
+                    // Actualizar la Polyline con el nuevo punto
+                    routePoints.add(ubicacionActual) // Añadir el nuevo punto a la lista
+                    polyline?.points = routePoints // Actualizar los puntos de la Polyline
+
+                    // Mover la cámara a la nueva ubicación
+                    mMap.moveCamera(CameraUpdateFactory.newLatLng(ubicacionActual))
                 }
-            }, null)
+            }
+        }
+
+        // Verificación de permisos de ubicación
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+
+        // Iniciar las actualizaciones de ubicación con la nueva LocationRequest
+        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, null)
+    }
+
+
+    // Manejar el resultado de la solicitud de permisos
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == LOCATION_PERMISSION_CODE) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                obtenerUbicacionYActualizar()
+            } else {
+                Toast.makeText(this, "Permiso de ubicación denegado.", Toast.LENGTH_LONG).show()
+            }
         }
     }
+
+    // Función para buscar una dirección y agregar el marcador sin borrar el marcador actual
+    private fun buscarDireccion(direccion: String) {
+        try {
+            val resultados = geocoder.getFromLocationName(direccion, 1)
+            if (resultados != null && resultados.isNotEmpty()) {
+                val location = resultados[0]
+                val destino = LatLng(location.latitude, location.longitude)
+
+                // Borrar el marcador del destino anterior si existe
+                if (destinationMarker != null) {
+                    // Solo removemos el marcador del destino anterior
+                    mMap.clear() // Borrar solo el destino anterior
+
+                    // Mantener el marcador de la ubicación actual
+                    currentLocationMarker?.let { mMap.addMarker(it) }
+                }
+
+                // Crear el nuevo marcador de destino
+                destinationMarker = MarkerOptions().position(destino).title(direccion)
+                mMap.addMarker(destinationMarker!!)
+                mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(destino, 15f))
+
+                // Calcular y mostrar la ruta desde la ubicación actual
+                if (lastLocation != null) {
+                    val origen = LatLng(lastLocation!!.latitude, lastLocation!!.longitude)
+                    calcularYMostrarRuta(origen, destino)
+                }
+
+            } else {
+                Toast.makeText(this, "Dirección no encontrada", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: IOException) {
+            Toast.makeText(this, "Error al buscar la dirección", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+
+    // Función para obtener la dirección a partir de las coordenadas
+    private fun obtenerDireccionDeCoordenadas(latLng: LatLng) {
+        try {
+            val direcciones = geocoder.getFromLocation(latLng.latitude, latLng.longitude, 1)
+            if (direcciones != null && direcciones.isNotEmpty()) {
+                val direccion = direcciones[0].getAddressLine(0)
+
+                // Agregar un marcador con la dirección
+                mMap.addMarker(MarkerOptions().position(latLng).title(direccion))
+                mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
+            } else {
+                Toast.makeText(this, "No se encontró dirección", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: IOException) {
+            Toast.makeText(this, "Error al obtener dirección", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Función para calcular la ruta entre dos puntos y dibujarla en el mapa
+    private fun calcularYMostrarRuta(origen: LatLng, destino: LatLng) {
+        val apiKey = "AIzaSyDONA4QwbjORMb3NM9NJCRxmZCXJWfaSVM" // Asegúrate de reemplazarlo con tu propia API Key de Google Directions
+        val url = "https://maps.googleapis.com/maps/api/directions/json?origin=${origen.latitude},${origen.longitude}&destination=${destino.latitude},${destino.longitude}&key=$apiKey"
+
+        // Crear una solicitud HTTP usando Volley
+        val requestQueue = Volley.newRequestQueue(this)
+        val stringRequest = StringRequest(
+            Request.Method.GET, url,
+            { response ->
+                try {
+                    // Parsear la respuesta JSON
+                    val jsonResponse = JSONObject(response)
+                    val routes = jsonResponse.getJSONArray("routes")
+
+                    if (routes.length() > 0) {
+                        val route = routes.getJSONObject(0)
+                        val polylinePoints = route.getJSONObject("overview_polyline").getString("points")
+                        val pointsList = decodePolyline(polylinePoints)
+
+                        // Dibujar la ruta en el mapa
+                        val polylineOptions = PolylineOptions()
+                        polylineOptions.addAll(pointsList)
+                        polylineOptions.width(10f)
+                        polylineOptions.color(R.color.purple) // Puedes personalizar el color
+
+                        // Añadir la Polyline en el mapa
+                        mMap.addPolyline(polylineOptions)
+                    } else {
+                        Toast.makeText(this, "No se encontró ruta", Toast.LENGTH_LONG).show()
+                    }
+
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    Toast.makeText(this, "Error al procesar la ruta", Toast.LENGTH_LONG).show()
+                }
+            },
+            { error ->
+                error.printStackTrace()
+                Toast.makeText(this, "Error en la solicitud: ${error.message}", Toast.LENGTH_LONG).show()
+            })
+
+        // Añadir la solicitud a la cola de Volley
+        requestQueue.add(stringRequest)
+    }
+
+    // Función para decodificar el string de Polyline de Google en una lista de LatLng
+    private fun decodePolyline(encoded: String): List<LatLng> {
+        val poly = ArrayList<LatLng>()
+        var index = 0
+        val len = encoded.length
+        var lat = 0
+        var lng = 0
+
+        while (index < len) {
+            var b: Int
+            var shift = 0
+            var result = 0
+            do {
+                b = encoded[index++].code - 63
+                result = result or (b and 0x1f shl shift)
+                shift += 5
+            } while (b >= 0x20)
+            val dlat = if (result and 1 != 0) (result shr 1).inv() else result shr 1
+            lat += dlat
+
+            shift = 0
+            result = 0
+            do {
+                b = encoded[index++].code - 63
+                result = result or (b and 0x1f shl shift)
+                shift += 5
+            } while (b >= 0x20)
+            val dlng = if (result and 1 != 0) (result shr 1).inv() else result shr 1
+            lng += dlng
+
+            val latLng = LatLng(
+                lat / 1E5, lng / 1E5
+            )
+            poly.add(latLng)
+        }
+
+        return poly
+    }
+
 }
