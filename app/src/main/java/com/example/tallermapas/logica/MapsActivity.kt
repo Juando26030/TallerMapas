@@ -19,6 +19,7 @@ import com.android.volley.toolbox.StringRequest
 import com.android.volley.toolbox.Volley
 import com.example.tallermapas.databinding.ActivityMapsBinding
 import com.example.tallermapas.R
+import com.example.tallermapas.funciones.FuncionesJson
 import com.example.tallermapas.funciones.FuncionesPermisos
 import com.example.tallermapas.funciones.FuncionesUbicacion
 import com.google.android.gms.maps.CameraUpdateFactory
@@ -213,16 +214,13 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
     }
 
     // Método que maneja la solicitud de permisos y actualiza la ubicación
-    // Método que maneja la solicitud de permisos y actualiza la ubicación
     private fun obtenerUbicacionYActualizar() {
         val fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
-        // Configuración para detectar cambios de más de 30 metros usando el Builder moderno
         val locationRequest = LocationRequest.Builder(
             Priority.PRIORITY_HIGH_ACCURACY,
-            5000L
-        ) // Intervalo de 5 segundos
-            .setMinUpdateIntervalMillis(3000L) // El intervalo más rápido, 3 segundos
+            5000L // Intervalo de 5 segundos
+        ).setMinUpdateIntervalMillis(3000L) // 3 segundos mínimo entre actualizaciones
             .setMinUpdateDistanceMeters(30f) // Desplazamiento mínimo de 30 metros
             .build()
 
@@ -234,21 +232,30 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
                 val longitud = location.longitude
                 val ubicacionActual = LatLng(latitud, longitud)
 
-                // Si es la primera vez o si el desplazamiento es significativo (> 30 metros)
                 if (lastLocation == null || lastLocation!!.distanceTo(location) > 30) {
                     lastLocation = location
 
-                    // Actualizar la Polyline con el nuevo punto
-                    routePoints.add(ubicacionActual) // Añadir el nuevo punto a la lista
-                    polyline?.points = routePoints // Actualizar los puntos de la Polyline
+                    // 1. Guardar la nueva ubicación en el archivo JSON
+                    FuncionesJson.escribirEnJson(this@MapsActivity, "ubicaciones.json", latitud, longitud)
 
-                    // Mover la cámara a la nueva ubicación
-                    mMap.moveCamera(CameraUpdateFactory.newLatLng(ubicacionActual))
+                    // 2. Actualizar la Polyline con el nuevo punto
+                    routePoints.add(ubicacionActual)
+                    polyline?.points = routePoints
+
+                    // 3. Actualizar el marcador en la nueva ubicación
+                    if (currentLocationMarker != null) {
+                        currentLocationMarker!!.position(ubicacionActual)
+                    } else {
+                        currentLocationMarker = MarkerOptions().position(ubicacionActual).title("Ubicación actual")
+                        mMap.addMarker(currentLocationMarker!!)
+                    }
+
+                    // 4. Mover la cámara a la nueva ubicación
+                    mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(ubicacionActual, 15f))
                 }
             }
         }
 
-        // Verificación de permisos de ubicación
         if (ActivityCompat.checkSelfPermission(
                 this,
                 Manifest.permission.ACCESS_FINE_LOCATION
@@ -260,9 +267,9 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
             return
         }
 
-        // Iniciar las actualizaciones de ubicación con la nueva LocationRequest
         fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, null)
     }
+
 
 
     // Manejar el resultado de la solicitud de permisos

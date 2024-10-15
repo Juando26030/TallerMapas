@@ -12,8 +12,16 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        logicaContacts()
         logicaCamera()
         logicaMap()
+    }
+
+    fun logicaContacts(){
+        binding.btnContactos.setOnClickListener {
+            val intent = Intent(this, ContactsActivity::class.java)
+            startActivity(intent)
+        }
     }
 
     fun logicaCamera(){

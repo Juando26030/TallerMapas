@@ -52,6 +52,9 @@ dependencies {
     implementation(libs.places)
     implementation(libs.firebase.firestore.ktx)
 
+    implementation (libs.glide)
+    annotationProcessor (libs.compiler)
+
     implementation (libs.osmdroid.android)
 
     testImplementation(libs.junit)
