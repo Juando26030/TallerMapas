@@ -5,4 +5,4 @@ Integrantes del grupo Backyardigans:
 -David Solis
 -Juan Garzón
 
-Enlace al video explicativo de youtube:
+Enlace al video explicativo de youtube: https://youtu.be/wg3kDm5zGRo
